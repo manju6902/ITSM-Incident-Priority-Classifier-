@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ticket Priority Classifier</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #2c2c2a; min-height: 100vh; }
+  header { background: #fff; border-bottom: 1px solid #e5e5e3; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 16px; font-weight: 500; }
+  .badge { background: #E6F1FB; color: #0C447C; font-size: 11px; padding: 3px 10px; border-radius: 4px; font-weight: 500; }
+  .container { max-width: 760px; margin: 32px auto; padding: 0 16px; }
+  .meta { font-size: 12px; color: #888; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #e5e5e3; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+  .card h2 { font-size: 13px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 16px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
+  input, select, textarea { width: 100%; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit; color: #2c2c2a; background: #fafafa; outline: none; transition: border 0.15s; }
+  input:focus, select:focus, textarea:focus { border-color: #378ADD; background: #fff; }
+  textarea { resize: vertical; min-height: 80px; }
+  .range-wrap { display: flex; align-items: center; gap: 10px; }
+  input[type=range] { flex: 1; padding: 0; border: none; background: transparent; }
+  .range-val { font-size: 13px; font-weight: 500; min-width: 36px; text-align: right; color: #378ADD; }
+  button { width: 100%; padding: 12px; background: #185FA5; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.15s; }
+  button:hover { background: #0C447C; }
+  button:active { transform: scale(0.99); }
+  #result { display: none; }
+  .result-inner { border-radius: 10px; padding: 20px 24px; border: 1px solid #e5e5e3; }
+  .result-top { display: flex; align-items: center; gap: 16px; }
+  .priority-badge { font-size: 28px; font-weight: 500; padding: 8px 20px; border-radius: 8px; }
+  .result-label { font-size: 14px; font-weight: 500; }
+  .result-sla { font-size: 12px; color: #666; margin-top: 3px; }
+  .result-conf { font-size: 12px; color: #888; margin-top: 12px; border-top: 1px solid #eee; padding-top: 10px; }
+  .spinner { display: none; text-align: center; padding: 16px; color: #888; font-size: 13px; }
+  @media (max-width: 540px) { .grid-2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ticket Priority Classifier</h1>
+  <span class="badge">{{ model_name }} · {{ accuracy }}% accuracy</span>
+</header>
+
+<div class="container">
+  <p class="meta">Built by Manjula · Real ITSM domain features · Autodesk incident management experience</p>
+
+  <div class="card">
+    <h2>Ticket Details</h2>
+    <div style="margin-bottom:14px">
+      <label>Ticket description</label>
+      <textarea id="ticket_text" placeholder="e.g. Auth service experiencing outage in production — all users affected"></textarea>
+    </div>
+    <div class="grid-2">
+      <div>
+        <label>Category</label>
+        <select id="category">
+          <option>Network</option><option>Application</option>
+          <option>Database</option><option>Security</option><option>Storage</option>
+        </select>
+      </div>
+      <div>
+        <label>Environment</label>
+        <select id="environment">
+          <option>Production</option><option>DR</option>
+          <option>Staging</option><option>Development</option>
+        </select>
+      </div>
+      <div>
+        <label>Affected users</label>
+        <input type="number" id="affected_users" value="0" min="0">
+      </div>
+      <div>
+        <label>Response time (min)</label>
+        <input type="number" id="response_time_min" value="30" min="1">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Operational Signals <span style="font-weight:400;font-size:11px;color:#aaa">(domain features)</span></h2>
+    <div style="margin-bottom:14px">
+      <label>Escalation count</label>
+      <div class="range-wrap">
+        <input type="range" id="escalation_count" min="0" max="10" value="0" oninput="document.getElementById('esc_val').textContent=this.value">
+        <span class="range-val" id="esc_val">0</span>
+      </div>
+    </div>
+    <div style="margin-bottom:14px">
+      <label>SLA breach risk (0 = none, 1 = certain)</label>
+      <div class="range-wrap">
+        <input type="range" id="sla_breach_risk" min="0" max="1" step="0.01" value="0.1" oninput="document.getElementById('sla_val').textContent=parseFloat(this.value).toFixed(2)">
+        <span class="range-val" id="sla_val">0.10</span>
+      </div>
+    </div>
+    <div>
+      <label>Repeat incident?</label>
+      <select id="repeat_incident">
+        <option value="0">No</option>
+        <option value="1">Yes</option>
+      </select>
+    </div>
+  </div>
+
+  <button onclick="classify()">Predict Priority</button>
+
+  <div class="spinner" id="spinner">Classifying...</div>
+
+  <div id="result" style="margin-top:20px">
+    <div class="result-inner" id="result-inner">
+      <div class="result-top">
+        <div class="priority-badge" id="r-badge"></div>
+        <div>
+          <div class="result-label" id="r-label"></div>
+          <div class="result-sla" id="r-sla"></div>
+        </div>
+      </div>
+      <div class="result-conf" id="r-conf"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function classify() {
+  const payload = {
+    ticket_text:       document.getElementById('ticket_text').value || 'service issue',
+    category:          document.getElementById('category').value,
+    environment:       document.getElementById('environment').value,
+    escalation_count:  document.getElementById('escalation_count').value,
+    sla_breach_risk:   document.getElementById('sla_breach_risk').value,
+    repeat_incident:   document.getElementById('repeat_incident').value,
+    response_time_min: document.getElementById('response_time_min').value,
+    affected_users:    document.getElementById('affected_users').value,
+  };
+
+  document.getElementById('result').style.display = 'none';
+  document.getElementById('spinner').style.display = 'block';
+
+  const res = await fetch('/predict', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  document.getElementById('spinner').style.display = 'none';
+
+  if (data.error) { alert(data.error); return; }
+
+  const inner = document.getElementById('result-inner');
+  inner.style.background = data.bg;
+  inner.style.borderColor = data.color + '44';
+
+  document.getElementById('r-badge').textContent = data.priority;
+  document.getElementById('r-badge').style.background = data.color;
+  document.getElementById('r-badge').style.color = '#fff';
+  document.getElementById('r-label').textContent = data.label + ' severity';
+  document.getElementById('r-sla').textContent = 'SLA target: ' + data.sla;
+  document.getElementById('r-conf').textContent = 'Model confidence: ' + data.confidence + '%  ·  Powered by ' + '{{ model_name }}';
+
+  document.getElementById('result').style.display = 'block';
+}
+</script>
+</body>
+</html>
